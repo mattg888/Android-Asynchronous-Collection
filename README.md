@@ -22,7 +22,8 @@ Create a class to deserialise to. This must have public variables with the same 
 
 --------------------------
 
-```CollectionResult<Review> collectionResult = new CollectionResult<Review>(){
+```java
+CollectionResult<Review> collectionResult = new CollectionResult<Review>(){
 	ProgressDialog loadingDialog = null;
     
 	@Override
