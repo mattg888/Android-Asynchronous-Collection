@@ -50,6 +50,5 @@ CollectionResult<Review> collectionResult = new CollectionResult<Review>(){
 pcol = new AsyncCollection<Review>(collectionResult, Review.class, "http://www.example.com/reviews");
 pcol.tabActivityGroup = parentTabContainer;
 pcol.addParam("id", "1");
-pcol.execute();```
-
-----------------------
+pcol.execute();
+```
