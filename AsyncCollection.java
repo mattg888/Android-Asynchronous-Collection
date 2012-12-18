@@ -1,93 +1,190 @@
 package uk.co.mattgrundy.remote;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
-import java.io.UnsupportedEncodingException;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 
+import org.apache.commons.codec.digest.UnixCrypt;
 import org.apache.http.HttpResponse;
-import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.content.ByteArrayBody;
+import org.apache.http.entity.mime.content.ContentBody;
+import org.apache.http.entity.mime.content.StringBody;
 import org.apache.http.impl.client.DefaultHttpClient;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
-
+import uk.co.createanet.Functions;
+import uk.co.createanet.UserManager;
+import uk.co.createanet.struts.AsyncObject;
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.AsyncTask;
+import android.util.Base64;
+import android.widget.Toast;
 
-public class AsyncCollection<T> extends AsyncTask<Void, Void, ArrayList<T>> implements Iterable<T> { 
-    private CollectionResult<T> collectionResult;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
+/*
+ *
+ * Params
+ * 
+		HashMap<String, String> params = new HashMap<String, String>();
+		params.put("email", email_address);
+ * 
+ * Multiple data result
+ * 
+		(new Async<AsyncObjects>(ForgottenPasswordActivity.this, new Async.CollectionResult<AsyncObjects>() {
+		
+			public void start() {
+				dialog = ProgressDialog.show(ForgottenPasswordActivity.this, "", "Sending password reminder...", true);
+			}
+		
+			public void getResult(AsyncObjects result) {
+				// we can just ignore this
+				if(result != null && result.response.compareToIgnoreCase("Success") == 0){
+					ForgottenPasswordActivity.this.finish();
+				}
+			}
+		
+			public void end() {
+				dialog.dismiss();
+			}
+		
+		}, AsyncObjects.class, "test_android.php", params, true)).execute();
+		
+ * 
+ * Single data result
+ * 
+    	(new Async<AsyncObject>(ForgottenPasswordActivity.this, new Async.CollectionResult<AsyncObject>() {
+
+			public void start() {
+				dialog = ProgressDialog.show(ForgottenPasswordActivity.this, "", "Sending password reminder...", true);
+			}
+
+			public void getResult(AsyncObject result) {
+				// we can just ignore this
+				if(result != null && result.response.compareToIgnoreCase("Success") == 0){
+					ForgottenPasswordActivity.this.finish();
+				}
+			}
+
+			public void end() {
+				dialog.dismiss();
+			}
+
+		}, AsyncObject.class, "test_android.php", params, true)).execute();
+		    	
+ * 
+ */
+
+public class AsyncCollection <V extends AsyncObject> extends AsyncTask<Void, Void, V> { 
+
+    protected CollectionResult<V> collectionResult;
 	
-	public ArrayList<T> products;
-    public int count = 0;
+	public V product;
     public String url;
+    
     public HashMap<String, String> params;
+    public HashMap<String, String> files;
     
-    public Class<T> clazz;
+    public boolean authenticate;
     
-    public int errorCode;
+    public Class<V> clazz;
+    public Context c;
     
-    public static int ERROR_NO_CONNECTION = 0;
-    public static int ERROR_DATA = 1;
-    public static int ERROR_LOCATION = 2;
+	// maximum image dimension (x / y)
+	private int maxD = 500;
+
+	public AsyncCollection(Context cIn, CollectionResult<V> collectionResultIn, Class<V> clazzIn, String urlIn) {
+		this(cIn, collectionResultIn, clazzIn, urlIn, new HashMap<String, String>());
+	}
+	
+	public AsyncCollection(Context cIn, CollectionResult<V> collectionResultIn, Class<V> clazzIn, String urlIn, HashMap<String, String>paramsIn) {
+		this(cIn, collectionResultIn, clazzIn, urlIn, new HashMap<String, String>(), false);
+	}
+	
+	public AsyncCollection(Context cIn, CollectionResult<V> collectionResultIn, Class<V> clazzIn, String urlIn, HashMap<String, String>paramsIn, boolean authenticateIn) {
+		this(cIn, collectionResultIn, clazzIn, urlIn, paramsIn, new HashMap<String, String>(), authenticateIn);
+	}
     
-	public AsyncCollection(CollectionResult<T> collectionResultIn, Class<T> clazzIn, String urlIn) {
+	public AsyncCollection(Context cIn, CollectionResult<V> collectionResultIn, Class<V> clazzIn, String urlIn, HashMap<String, String>paramsIn, HashMap<String, String> filesIn, boolean authenticateIn) {
 		collectionResult = collectionResultIn;
-		products = new ArrayList<T>();
 		url = urlIn;
-		params = new HashMap<String, String>();
+		params = paramsIn;
+		c = cIn;
+		authenticate = authenticateIn;
+		files = filesIn;
 		
 		clazz = clazzIn;
 	}
 	
-	public Iterator<T> iterator() {
-		return products.iterator();
+	public byte[] resizeImage(String file, BitmapFactory.Options bmpFactoryOptions) throws IOException{
+		// get the image and resize
+		ByteArrayOutputStream stream = new ByteArrayOutputStream();
+		
+		int heightRatio = (int)android.util.FloatMath.ceil(bmpFactoryOptions.outHeight/(float)maxD);
+		int widthRatio = (int)android.util.FloatMath.ceil(bmpFactoryOptions.outWidth/(float)maxD);
+    
+		if (heightRatio > 1 || widthRatio > 1){
+			if (heightRatio > widthRatio){
+				bmpFactoryOptions.inSampleSize = heightRatio;
+			} else {
+				bmpFactoryOptions.inSampleSize = widthRatio; 
+			}
+		}
+    
+		bmpFactoryOptions.inJustDecodeBounds = false;
+		Bitmap image = BitmapFactory.decodeFile(file, bmpFactoryOptions);
+
+		image.compress(Bitmap.CompressFormat.JPEG, 80, stream);
+		
+		byte[] byte_arr = stream.toByteArray();
+		stream.close();
+		
+		image = null;
+		
+		return byte_arr;
 	}
 	
-	public void add(T product) {  
-		products.add(product);
-		count++;
+	protected V doInBackground(Void... arg0) {
+
+		try{
+	        Reader r = getInputStream();
+	        
+	        // with MySQL date format
+			Gson gson = new GsonBuilder().setDateFormat("yyyy-MM-dd" /* HH:mm:ss" */).create();
+	        
+	        product = gson.fromJson(r, clazz);
+	        
+	        if(r != null){
+	        	r.close();
+	        }
+
+        } catch(Exception ex){
+            ex.printStackTrace();
+        }
+		
+		return product;
 	}
+
 	
 	/*
 	 * Appends the params to the URL
 	 */
-	private String buildURL(){
-		String urlOut = url + "?";
-		
-		int i = 0;
-		for (String key : params.keySet()) {
-			try {
-				if(i > 0){
-					urlOut += '&';
-				}
-				
-				String value = params.get(key);
-				
-				if(value == null || value.compareTo("null") == 0){
-					value = "";
-				}
-				
-				urlOut += URLEncoder.encode(key, "UTF-8").toString() + '=' + URLEncoder.encode(value, "UTF-8").toString();
-			} catch (UnsupportedEncodingException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-			
-			i++;
-		}
-		
+    protected String buildURL(){
+		String urlOut = Functions.API_BASE + url;
+
 		System.out.println("**** (@" + this.getClass() + ") URL: " + urlOut);
 		
 		return urlOut;
 	}
-	
+
 	/*
 	 * Just a helper for adding a param
 	 */
@@ -95,107 +192,71 @@ public class AsyncCollection<T> extends AsyncTask<Void, Void, ArrayList<T>> impl
 		params.put(key, value);
 	}
 	
-	public ArrayList<T> toArray(){
+	public Reader getInputStream() throws IOException {
 		
-		ArrayList<T> stringSongs = new ArrayList<T>();
-
-        for (T thisProduct : products) {
-        	stringSongs.add(thisProduct);
+		HttpClient httpclient = new DefaultHttpClient();
+		   
+		
+		MultipartEntity reqEntity = new MultipartEntity();
+		reqEntity = buildParams(reqEntity);
+				
+		HttpPost httppost = new HttpPost(buildURL());
+		
+        if(authenticate){
+        	String encoding = Base64.encodeToString((Functions.API_USER + ":" + Functions.API_PASS).getBytes(), Base64.NO_WRAP);
+        	httppost.setHeader("Authorization", "Basic " + encoding);
         }
-		
-        return stringSongs;
         
+		httppost.setEntity(reqEntity);
+		
+		HttpResponse response = httpclient.execute(httppost);
+		
+		InputStream is = response.getEntity().getContent();
+		
+		return new InputStreamReader(is);
 	}
 	
-	public T getAtIndex(int i){
+	protected MultipartEntity buildParams(MultipartEntity entity) throws IOException{
 		
-		int j = 0;
+		for (String key : params.keySet()) {
+
+			String value = params.get(key);
+			
+			if(value == null || value.compareTo("null") == 0){
+				value = "";
+			}
+			
+			entity.addPart(key, new StringBody(value));
+
+		}
 		
-		for(T product : products){
-			if(j++ == i){
-				return product;
+		if(files != null){
+
+			for(String key : files.keySet()){
+				String value = files.get(key);
+
+				BitmapFactory.Options bmpFactoryOptions = new BitmapFactory.Options();
+		        bmpFactoryOptions.inJustDecodeBounds = true;
+
+				byte[] resized = resizeImage(value, bmpFactoryOptions);
+				
+				ContentBody imageOut = new ByteArrayBody(resized, key + ".jpg");
+				entity.addPart(key, imageOut);
+				
+			}
+			
+		}
+
+		if(authenticate){
+			entity.addPart("apikey", new StringBody(Functions.API_KEY));
+		
+			if(UserManager.getLogin(c) && UserManager.user != null){
+				entity.addPart("user_id", new StringBody("" + UserManager.user.id));
+				entity.addPart("passphrase", new StringBody(UnixCrypt.crypt("" + UserManager.user.id, Functions.API_SALT)));
 			}
 		}
 		
-		return null;
-	}
-
-	public InputStream getJSONData(String url){
-        DefaultHttpClient httpClient = new DefaultHttpClient();
-        URI uri;
-        InputStream data = null;
-        try {
-            uri = new URI(url);
-            HttpGet method = new HttpGet(uri);
-            HttpResponse response = httpClient.execute(method);
-            data = response.getEntity().getContent();
-        } catch (Exception e) {
-        	errorCode = ERROR_NO_CONNECTION;
-        	
-            e.printStackTrace();
-        }
-        
-        return data;
-    }
-	
-	@Override
-	protected ArrayList<T> doInBackground(Void... arg0) {
-		
-			Reader r = null;
-			JsonElement je = null;
-
-			try{
-		        Gson gson = new Gson();
-		        
-		        System.out.println("Got some GSON");
-		        
-		        InputStream stream = getJSONData(buildURL());
-
-		        r = new InputStreamReader(stream);
-
-		        JsonParser parser = new JsonParser();
-		        
-		        je = parser.parse(r);
-		        
-		        JsonArray array = je.getAsJsonArray();
-	
-		    	products = new ArrayList<T>(array.size() - 1);
-		    	
-		    	T product = null;
-		    	
-		        for(int i = 0, j = array.size(); i < j; i++){
-		        	product = gson.fromJson(array.get(i), clazz);
-		        	
-		        	if(product != null){
-		        		products.add(product);
-		        	}
-		        
-		        }
-
-		        if(stream != null){
-		        	stream.close();
-		        }
-		        
-		        if(r != null){
-		        	r.close();
-		        }
-		        
-	
-	        } catch(Exception ex){
-				
-	        	if(je != null){
-					if(je.getAsString().compareTo("LOCATION") == 0){
-						errorCode = ERROR_LOCATION;
-					} else {	
-						errorCode = ERROR_DATA;
-					}
-	        	}
-	        	
-	        	System.out.println("Failed here");
-	            ex.printStackTrace();
-	        }
-		
-		return (ArrayList<T>) products;
+		return entity;
 	}
 	
 	@Override
@@ -204,15 +265,30 @@ public class AsyncCollection<T> extends AsyncTask<Void, Void, ArrayList<T>> impl
 	}
 	
 	@Override
-    protected void onPostExecute(ArrayList<T> prods) {    	
-		collectionResult.getResult(prods);
+    protected void onPostExecute(V product) {
+		
+		// check for error messages / alerts to display
+		if(product != null){
+			if(product.response.compareToIgnoreCase("Error") == 0){
+				Toast.makeText(c, product.message, Toast.LENGTH_SHORT).show();
+			} else if(product.response.compareToIgnoreCase("Alert") == 0){
+				Toast.makeText(c, product.message, Toast.LENGTH_SHORT).show();
+			}
+		
+			collectionResult.getResult(product);
+			
+		} else {
+			// generally no internet connection
+			Toast.makeText(c, "Sorry, the service is current unavailable. Please make sure you have a working internet connection", Toast.LENGTH_SHORT).show();
+		}
+
 		collectionResult.end();
 	}
 	
-	public static abstract class CollectionResult<T>{
+	public static interface CollectionResult<T>{
         public abstract void start();
-		public abstract void getResult(ArrayList<T> products);
+		public abstract void getResult(T products);
         public abstract void end();
     }
-	
+
 }
